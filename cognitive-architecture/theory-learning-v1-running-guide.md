@@ -1,18 +1,18 @@
 # V1 실행 및 검증 안내
 
-2026-09-10. 요구사항 기준은 [고정 V1 스펙](https://github.com/sicarius01/codex-docs/blob/22fdb8ed09e4a4d8f8cf277c106066f427fa8e36/cognitive-architecture/theory-learning-v1-spec.md)입니다. 구현 기준 커밋은 `0f922a0`이며, 구현 설계는 구현 저장소의 `docs/design/theory-learning-v1-design.md`를 참고합니다.
+2026-09-10. 요구사항 기준은 [고정 V1 스펙](https://github.com/sicarius01/codex-docs/blob/22fdb8ed09e4a4d8f8cf277c106066f427fa8e36/cognitive-architecture/theory-learning-v1-spec.md)입니다. 구현 기준 커밋은 `1e290d8`이며, 구현 설계는 구현 저장소의 `docs/design/theory-learning-v1-design.md`를 참고합니다.
 
 ## 실행
 
 Windows PowerShell, Python 3.13+, uv, npm을 사용합니다. 의존성은 `uv.lock`과 `package-lock.json`으로 고정했습니다. PI는 `@earendil-works/pi-coding-agent@0.85.1`, 프로젝트 Node는 22.22.0입니다. 전역 Node를 변경하지 않습니다.
 
-아래 명령은 **공개 문서 저장소가 아니라 구현 저장소(`context`) 루트**에서 실행합니다. `scripts/start.ps1`, `pyproject.toml`, `package.json`이 있는 폴더인지 확인합니다. PowerShell에서 해당 폴더로 이동한 뒤 최초 설치와 실행을 진행합니다:
+아래 명령은 **공개 문서 저장소가 아니라 구현 저장소(`context`) 루트**에서 실행합니다. `scripts/start.ps1`, `pyproject.toml`, `package.json`이 있는 폴더인지 확인합니다. 설치만 진행하려면 `./scripts/install.ps1`을 사용합니다. 프로젝트 전용 Node를 `node_modules` 바깥에서 실행해 Windows 재설치 잠금 문제를 피합니다. 서비스와 PI 로그인 프로세스를 종료한 상태에서 설치합니다. 설치와 서버 시작을 함께 하려면:
 
 ```powershell
 ./scripts/start.ps1 -Install
 ```
 
-설치만 진행하려면 `./scripts/install.ps1`을 사용합니다. Windows 파일 잠금을 피하기 위해 서비스와 PI 로그인 프로세스를 종료한 상태에서 설치합니다. 이후 실행은 `./scripts/start.ps1`입니다. GUI는 <http://127.0.0.1:8765>입니다. 설치·빌드를 개별 실행하려면:
+이후 실행은 `./scripts/start.ps1`입니다. GUI는 <http://127.0.0.1:8765>입니다. 설치·빌드를 개별 실행하려면:
 
 ```powershell
 uv sync --locked --python 3.13
@@ -37,7 +37,7 @@ PI 구독 로그인은 다음 명령으로 시작합니다. `device_code`를 선
 
 OpenAI의 [구독 및 API 인증 안내](https://learn.chatgpt.com/docs/auth), [모델별 구독 사용량 안내](https://learn.chatgpt.com/docs/pricing), PI의 [제공자 문서](https://github.com/earendil-works/pi-mono/blob/main/packages/coding-agent/docs/providers.md)를 참고합니다.
 
-`.env.example`을 `.env`로 복사하고 로컬에서 값을 입력합니다. 키는 채팅이나 Git에 올리지 않습니다. 시작 스크립트는 `.env`가 있으면 `uv run --env-file .env`로 읽습니다. 직접 실행할 경우에도 해당 옵션을 붙여야 합니다.
+새로 설정할 때는 `.env.example`을 `.env`로 복사하고 로컬에서 값을 입력합니다. 이미 설정된 `.env`는 덮어쓰지 않습니다. 키는 채팅이나 Git에 올리지 않습니다. 시작 스크립트는 `.env`가 있으면 `uv run --env-file .env`로 읽습니다. 직접 실행할 경우에도 해당 옵션을 붙여야 합니다.
 
 - `THEORY_MODEL_PROVIDER`, `THEORY_MODEL_ID`: PI에서 실제 사용할 제공자와 모델 ID.
 - 해당 제공자의 PI 인증: PI 인증 저장소 또는 PI가 지원하는 제공자 환경변수. 이 프로젝트가 임의의 모델·계정을 선택하지 않습니다.
@@ -51,11 +51,30 @@ uv run --env-file .env theory doctor
 uv run --env-file .env theory serve --standalone
 ```
 
-`doctor`는 설정 존재 여부만 표시하며 비밀 값은 출력하지 않습니다. Langfuse 서버 설치는 기존 스펙의 Windows Docker Desktop/WSL2 실행 안내를 따릅니다. **2026-09-10 추가 설치에서 Docker Desktop 설치와 로컬 Compose 구성을 완료했습니다. Windows Virtual Machine Platform 활성화는 UAC 승인 취소로 완료되지 않았으므로 Docker 엔진과 Langfuse 서버 실행·실제 API 왕복 검증은 아직 남아 있습니다.** Python SDK 4.15.2의 실제 메서드 시그니처를 확인해 adapter를 구현했습니다.
+`doctor`는 설정 존재 여부만 표시하며 비밀 값은 출력하지 않습니다. Langfuse 서버 설치는 기존 스펙의 Windows Docker Desktop/WSL2 실행 안내를 따릅니다. **2026-09-10 Windows Virtual Machine Platform 활성화와 재부팅 후 Docker Linux 엔진, 로컬 Langfuse v4, 프로젝트 초기화와 SDK 인증을 확인했습니다.** Python SDK 4.15.2로 새 Worker 기록 472개를 여러 페이지에 걸쳐 조회하고 원본 해시가 모두 일치하는 것을 확인했습니다. 현재 adapter의 observations v2 API는 self-hosted Langfuse v4 이상이 필요합니다.
 
-Langfuse 미설정·전송 지연·조회 불일치는 학습 완료로 처리하지 않습니다. Worker 기록은 로컬에 먼저 저장되고 outbox로 전송됩니다. 학습은 서버 조회로 원문 해시가 확인된 snapshot만 사용합니다. `flush()` 반환은 조회 성공을 뜻하지 않습니다. 조회 실패는 `waiting_for_rollout`으로 남으며 설정·서버 상태를 복구한 뒤 재개할 수 있습니다. 통신 재시도로 커널 실험을 다시 실행하지 않습니다.
+이 머신에 준비된 `.local/langfuse/compose.yml`을 다시 시작할 때는 Docker Desktop을 먼저 켠 뒤 구현 저장소 루트에서 아래 명령을 실행합니다. Compose와 비밀 설정은 로컬 전용이며 Git에 포함되지 않습니다. 새 머신에서는 별도로 준비해야 합니다.
+
+```powershell
+docker compose --project-directory .local/langfuse -f .local/langfuse/compose.yml up -d
+./scripts/start.ps1
+```
+
+앱은 <http://127.0.0.1:8765>, Langfuse는 <http://localhost:3000>입니다. Langfuse 로그인 정보는 로컬 `.local/langfuse/.env`의 `LANGFUSE_INIT_USER_EMAIL`과 `LANGFUSE_INIT_USER_PASSWORD`에서 확인합니다. 프로젝트 키는 앱 `.env`에 연결했습니다. 비밀 파일 전체를 공유하거나 덮어쓰지 않습니다. Langfuse 데이터는 Docker 볼륨에 유지됩니다.
+
+Langfuse 미설정·전송 지연·조회 불일치는 학습 완료로 처리하지 않습니다. Worker 기록은 로컬에 먼저 저장되고 outbox로 전송됩니다. 학습은 서버 조회로 원문 해시가 확인된 snapshot만 사용합니다. `flush()` 반환은 조회 성공을 뜻하지 않습니다. 미설정이나 기록 누락 등 준비되지 않은 상태는 대기 한도 후 `waiting_for_rollout`으로 남으며 설정·서버 상태를 복구한 뒤 재개할 수 있습니다. 인증·통신 예외 등은 `failed`가 될 수 있으므로 실행 오류도 확인합니다. 통신 재시도로 커널 실험을 다시 실행하지 않습니다.
 
 ## 한 번의 학습
+
+### 테스트 채팅
+
+`http://127.0.0.1:8765/?tab=chat` 또는 좌측 **테스트 채팅** 탭에서 직접 메시지를 보냅니다. Enter는 전송, Shift+Enter는 줄바꿈입니다. 공통 모델 또는 Worker 역할에 지정한 모델을 사용하며 **모델 변경** 버튼으로 설정 화면을 엽니다.
+
+최근 20개 메시지를 문맥으로 전달합니다. 대화는 같은 브라우저 탭의 새로고침 후에도 유지되고, **새 대화**로 현재 대화를 비웁니다. 실제 실행 기록은 유지됩니다. 응답 중단과 각 답변의 실행 기록 링크를 제공합니다. 답변은 실행 완료 후 표시합니다. 채팅은 Langfuse 서버 없이도 사용할 수 있으며 이론 학습은 별도로 시작합니다.
+
+실제 Chromium에서 Luna에 두 차례 메시지를 보내 Python 계산 결과 `782`와 이전 답변을 이용한 후속 결과 `783`을 확인했습니다. 탭 이동, 새로고침 후 대화 유지, 새 대화 동작과 JavaScript 오류 없음을 확인했습니다. 이는 테스트 채팅 검증이며 전체 GUI에 대한 검증 완료를 의미하지 않습니다.
+
+### 학습 실행
 
 모델과 Langfuse를 설정한 뒤 standalone 서버를 실행해 둡니다. GUI 개요에서 Worker 작업을 입력하거나 **별도 PowerShell 터미널을 구현 저장소 루트에서 열어** CLI를 사용합니다. 아래 명령은 한 줄씩 실행하며, `WORKER_RUN_ID`와 `LEARNING_RUN_ID`는 실행 목록에서 확인한 실제 ID로 바꿉니다. Worker 작업이 완료된 뒤 학습을 시작합니다.
 
@@ -73,11 +92,24 @@ uv run theory cancel "LEARNING_RUN_ID"
 uv run theory resume "LEARNING_RUN_ID"
 ```
 
+기본 학습 토큰 예산은 120,000입니다. 이번 실제 연결 시험에서는 API로 200,000을 지정했습니다. 호출 전에 입력의 UTF-8 바이트 수 등을 기준으로 보수적으로 예약하므로 실제 사용 토큰이 한도보다 작아도 다음 호출을 시작하지 못할 수 있습니다. 같은 예산으로 학습하려면 아래의 Worker ID를 바꿔 실행합니다. GUI에는 아직 예산 편집 기능이 없습니다.
+
+```powershell
+$learningRequest = @{
+    kind = 'learn'
+    target_id = '<worker-run-id>'
+    payload = @{ budget = @{ tokens = 200000 } }
+} | ConvertTo-Json -Depth 5
+Invoke-RestMethod -Method Post -Uri 'http://127.0.0.1:8765/api/v1/commands' -ContentType 'application/json' -Body $learningRequest
+```
+
 Extractor → Reviewer → 실제 커널 조사 → Reviewer 결과 해석 및 필요 시 후속 조사 → Integrator → 검증·원자적 KB 반영 순서입니다. 후보가 없으면 이후 단계를 명시적으로 건너뜁니다. Reviewer 조사는 최초 두 개, 각각 후속 한 개 이내이고 역할별 도구 예산도 함께 적용됩니다. Integrator는 변경안을 제안하며 직접 저장하거나 실험하지 않습니다.
+
+Integrator가 잘못된 근거 ID·참조 위치·이론 관계를 제안하면 KB 저장을 차단하고 오류 목록을 전달해 **도구 호출 없이 한 번만 수정**하게 합니다. 이론의 `evidence`와 `counterevidence`에는 설명문 대신 정의된 근거 ID가 들어갑니다. 실제 실험 근거는 조회가 검증된 investigation ID와 결과 JSON Pointer를 사용합니다. 최초 제안과 수정안은 각각 보존하며, 재개 시 이미 완료한 조사와 저장된 수정안을 사용합니다. 수정이 다시 실패하거나 중단되어도 같은 실행에서 무제한으로 모델을 재호출하지 않습니다. 수정 호출에도 기존 실행의 요청·토큰·시간 예산이 적용됩니다.
 
 채택·보류·기각은 잠정적 판단입니다. 시스템은 증거 타입과 실제 참조 위치, 중복 root, 실행 여부 및 KB 버전을 검사합니다. **모델이 내린 의미론적 판단 자체가 옳다는 보장은 없습니다.** 보류 이론은 조건·한계와 함께 표시하고 기각 이론은 문맥에서 제외합니다.
 
-GUI 좌측 8개 탭에서 실행 기록, 역할별 실제 모델 입력·응답, 도구 결과, 이론·관계·수정 이력, 실험, KB snapshot, 문맥 미리보기, 운영 상태를 확인합니다. 실제 전송 입력과 미리보기는 표시를 구분합니다. 이론의 근거 버튼으로 원래 증거 참조를 확인할 수 있습니다. 큰 원문은 JSON을 펼쳐 읽으며 실행 산출물의 HTML을 자동 실행하지 않습니다.
+GUI 좌측 9개 탭에서 테스트 채팅, 실행 기록, 역할별 실제 모델 입력·응답, 도구 결과, 이론·관계·수정 이력, 실험, KB snapshot, 문맥 미리보기, 운영 상태를 확인합니다. 실제 전송 입력과 미리보기는 표시를 구분합니다. 이론의 근거 버튼으로 원래 증거 참조를 확인할 수 있습니다. 큰 원문은 JSON을 펼쳐 읽으며 실행 산출물의 HTML을 자동 실행하지 않습니다.
 
 ## 팀 PI 연결
 
@@ -106,4 +138,6 @@ npm run build
 
 자동 테스트는 실제 SQLite, 실제 Windows Jupyter 커널, 실제 PI SDK와 로컬 HTTP 응답 fixture를 사용합니다. Langfuse 지연·페이지네이션·중복 검증은 명시적 test double입니다. 테스트용 응답을 모델의 추론 성능이나 Langfuse 실서버 검증으로 집계하지 않습니다. 테스트 데이터는 임시 디렉토리에 생성됩니다.
 
-2026-09-10 구현 검증 환경에서는 브라우저 제어 표면이 연결되지 않아 GUI 시각·클릭 검증은 미완료입니다. TypeScript 검사, production 빌드, HTTP API 검증을 수행했습니다. 실제 모델·Langfuse 연결, 팀 PI 세션 통합, 216회 본평가까지 통과한 출시 완료 상태와 구분합니다. 평가 준비는 구현 저장소의 `docs/implementation/evaluation-v1.md`를 따릅니다.
+2026-09-10 최종 Python 테스트 47개와 Ruff 검사를 통과했습니다. 별도의 실제 연결 시험에서는 Luna Worker 기록 472개를 로컬 Langfuse에서 조회·검증하고, 이론 추출과 검토, 실제 커널 실험 두 개를 거쳐 이론 한 개를 KB에 저장했습니다. 이후 새 Worker의 실제 provider payload에 저장된 이론 revision이 포함된 것을 확인했습니다. 최초 시험에서 발견한 근거 참조 오류를 보완한 뒤 새 학습 실행이 완료된 결과이며, 실패 기록도 보존했습니다. 이 시험은 연결과 데이터 흐름을 확인한 것으로 지능·정확도 향상의 증거는 아닙니다.
+
+실제 Chromium에서 테스트 채팅의 모델 응답·도구 실행·탭 이동·새로고침을 확인했고, 재부팅 후 앱 채팅, 역할별 실제 입력·응답 상세, 생성된 이론 상세와 Langfuse 로그인 화면도 확인했습니다. 모든 GUI 기능의 검증을 완료했다는 의미는 아닙니다. 팀 PI 세션 통합과 216회 본평가는 아직 수행하지 않았습니다. 평가 준비는 구현 저장소의 `docs/implementation/evaluation-v1.md`를 따릅니다.
