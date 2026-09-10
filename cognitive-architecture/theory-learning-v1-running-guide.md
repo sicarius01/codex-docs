@@ -1,6 +1,6 @@
 # V1 실행 및 검증 안내
 
-2026-09-10. 요구사항 기준은 [고정 V1 스펙](https://github.com/sicarius01/codex-docs/blob/22fdb8ed09e4a4d8f8cf277c106066f427fa8e36/cognitive-architecture/theory-learning-v1-spec.md)입니다. 구현 기준 커밋은 `ce77a25`이며, 구현 설계는 구현 저장소의 `docs/design/theory-learning-v1-design.md`를 참고합니다.
+2026-09-10. 요구사항 기준은 [고정 V1 스펙](https://github.com/sicarius01/codex-docs/blob/22fdb8ed09e4a4d8f8cf277c106066f427fa8e36/cognitive-architecture/theory-learning-v1-spec.md)입니다. 구현 기준 커밋은 `0f922a0`이며, 구현 설계는 구현 저장소의 `docs/design/theory-learning-v1-design.md`를 참고합니다.
 
 ## 실행
 
@@ -12,7 +12,7 @@ Windows PowerShell, Python 3.13+, uv, npm을 사용합니다. 의존성은 `uv.l
 ./scripts/start.ps1 -Install
 ```
 
-이후 실행은 `./scripts/start.ps1`입니다. GUI는 <http://127.0.0.1:8765>입니다. 설치·빌드를 개별 실행하려면:
+설치만 진행하려면 `./scripts/install.ps1`을 사용합니다. Windows 파일 잠금을 피하기 위해 서비스와 PI 로그인 프로세스를 종료한 상태에서 설치합니다. 이후 실행은 `./scripts/start.ps1`입니다. GUI는 <http://127.0.0.1:8765>입니다. 설치·빌드를 개별 실행하려면:
 
 ```powershell
 uv sync --locked --python 3.13
@@ -24,6 +24,18 @@ uv run theory serve --standalone
 모델 없이 기록 탐색과 문맥 미리보기만 실행할 때는 `uv run theory serve` 또는 `./scripts/start.ps1 -NoAgent`를 사용합니다. 실제 작업 데이터는 `.local/default/`에 저장됩니다. 프로젝트를 분리하려면 서로 다른 `--data-dir`와 포트를 사용합니다. 같은 data-dir의 동시 실행은 OS 파일 잠금으로 차단합니다. 서버 종료는 실행 터미널에서 Ctrl+C입니다.
 
 ## 모델·Langfuse 설정
+
+GUI의 **시스템 → 모델 설정**에서 공통 모델과 Worker·Extractor·Reviewer·Integrator 각각의 모델을 선택하고 저장할 수 있습니다. 역할별 설정이 없으면 공통 모델을 사용합니다. 저장값은 해당 data-dir의 SQLite에 유지되며 `.env`보다 우선합니다. 새 실행 시작 시 모델 설정을 harness snapshot에 고정하므로 설정을 변경해도 기존 실행의 재개는 원래 모델을 사용합니다. 팀 PI Worker의 모델은 팀 PI에서 선택하며 이 화면은 별도 RoleHost 세션에 적용됩니다.
+
+Codex Pro 구독은 PI의 `openai-codex` 제공자와 OAuth 로그인으로 연결할 수 있습니다. 일반 `openai` API 제공자는 별도 API 과금 경로입니다. 현재 테스트용 기본 선택은 `openai-codex / gpt-5.6-luna`입니다. 모델 목록에 있다는 사실과 해당 계정에서 실제 호출에 성공했다는 사실은 구분합니다. 자동 오케스트레이터 모델 선택은 아직 구현하지 않았습니다.
+
+PI 구독 로그인은 다음 명령으로 시작합니다. `device_code`를 선택하면 표시되는 OpenAI 주소에 사용자 본인이 로그인하고 일회용 코드를 입력합니다. 인증은 PI의 로컬 인증 저장소가 관리합니다.
+
+```powershell
+./node_modules/node/bin/node.exe --import tsx pi/models.ts login
+```
+
+OpenAI의 [구독 및 API 인증 안내](https://learn.chatgpt.com/docs/auth), [모델별 구독 사용량 안내](https://learn.chatgpt.com/docs/pricing), PI의 [제공자 문서](https://github.com/earendil-works/pi-mono/blob/main/packages/coding-agent/docs/providers.md)를 참고합니다.
 
 `.env.example`을 `.env`로 복사하고 로컬에서 값을 입력합니다. 키는 채팅이나 Git에 올리지 않습니다. 시작 스크립트는 `.env`가 있으면 `uv run --env-file .env`로 읽습니다. 직접 실행할 경우에도 해당 옵션을 붙여야 합니다.
 
@@ -39,7 +51,7 @@ uv run --env-file .env theory doctor
 uv run --env-file .env theory serve --standalone
 ```
 
-`doctor`는 설정 존재 여부만 표시하며 비밀 값은 출력하지 않습니다. Langfuse 서버 설치는 기존 스펙의 Windows Docker Desktop/WSL2 실행 안내를 따릅니다. **2026-09-10 구현 검증 환경에서는 Docker CLI와 Langfuse 키가 확인되지 않았으므로 서버 설치·실제 API 왕복 검증 완료를 주장하지 않습니다.** Python SDK 4.15.2의 실제 메서드 시그니처를 확인해 adapter를 구현했습니다.
+`doctor`는 설정 존재 여부만 표시하며 비밀 값은 출력하지 않습니다. Langfuse 서버 설치는 기존 스펙의 Windows Docker Desktop/WSL2 실행 안내를 따릅니다. **2026-09-10 추가 설치에서 Docker Desktop 설치와 로컬 Compose 구성을 완료했습니다. Windows Virtual Machine Platform 활성화는 UAC 승인 취소로 완료되지 않았으므로 Docker 엔진과 Langfuse 서버 실행·실제 API 왕복 검증은 아직 남아 있습니다.** Python SDK 4.15.2의 실제 메서드 시그니처를 확인해 adapter를 구현했습니다.
 
 Langfuse 미설정·전송 지연·조회 불일치는 학습 완료로 처리하지 않습니다. Worker 기록은 로컬에 먼저 저장되고 outbox로 전송됩니다. 학습은 서버 조회로 원문 해시가 확인된 snapshot만 사용합니다. `flush()` 반환은 조회 성공을 뜻하지 않습니다. 조회 실패는 `waiting_for_rollout`으로 남으며 설정·서버 상태를 복구한 뒤 재개할 수 있습니다. 통신 재시도로 커널 실험을 다시 실행하지 않습니다.
 
