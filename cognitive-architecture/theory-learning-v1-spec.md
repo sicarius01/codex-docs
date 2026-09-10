@@ -4,6 +4,8 @@
 
 상태: 초기 구현 명세 초안. 구현 및 학습 효과는 아직 검증하지 않았다.
 
+개정: 담당 범위를 다섯 가지 이론 학습 기능으로 한정하고, PI extension 연결 및 Windows의 Langfuse 로컬 실행 방식을 반영했다.
+
 ## 1. 목표와 완료의 의미
 
 모델 가중치를 업데이트하지 않고, 경험에서 설명과 사고 방법을 만들고 검토하며 다음 작업에 재사용하는 시스템을 구현한다. V1은 하나의 작업 환경에서 아래 다섯 기능이 실제로 연결되는 것을 목표로 한다.
@@ -16,22 +18,31 @@
 
 **기능 완료와 능력 개선은 별도 판정이다.** 다섯 단계가 동작해도 지능 향상이 입증되는 것은 아니다. 새 과제에서 정확도·오류·비용을 비교하는 평가를 함께 만든다.
 
+### 1.1 담당 범위
+
+이 명세는 팀 전체 하네스가 아니라 **경험·이론 학습 모듈**의 V1이다. 팀의 LLM judge 구현·운영, 전략 결함 심사, 백테스트 엔진과 성과 판정은 담당 범위에 포함하지 않는다. 다른 모듈에서 받은 결과는 출처와 함께 경험으로 읽을 수 있지만 그 판정기를 이 모듈에서 만들거나 대체하지 않는다.
+
+하네스 전체의 프롬프트·도구 코드·미들웨어를 자동 변경하고 후보 버전을 경쟁·채택·롤백하는 기능도 V1에서 제외한다. 이는 이후 팀 공동 작업이다. V1에서 바뀌는 것은 이론·관계·사고 방법에 관한 지식과 다음 작업에 제공할 문맥이다. 역할 프롬프트의 버전 추적은 포함하지만 역할 프롬프트 자체의 자동 진화는 포함하지 않는다.
+
+이론의 채택·보류·수정·기각은 다섯 기능에 필요한 내부 통합 판단으로 유지한다. 이 역할을 `Integrator`라고 부르며 팀의 별도 LLM judge와 구분한다. V1의 기능 시험 및 소규모 비교도 이 모듈에 한정한다.
+
 ## 2. 확정 전제와 이번 명세의 선택
 
 | 구분 | 내용 |
 | --- | --- |
-| 팀 전제 | PI agent를 기반으로 직접 구성한다. 주 언어는 Python이다. rollout 구성·관찰에는 Langfuse를 사용한다. |
+| 팀 전제 | PI 코딩 에이전트의 extension에서 호출할 수 있는 모듈로 구성한다. 주 언어는 Python 3.13 이상이며 uv를 사용한다. rollout 구성·관찰에는 Langfuse를 사용한다. |
 | 실행 환경 | V1 개발 대상은 Windows 네이티브다. 각 에이전트 인스턴스에 별도 Jupyter kernel을 부여한다. |
 | 장기 환경 방향 | 에이전트별 OS 환경 분리를 고려한다. Vetu의 Windows/WSL 적용 가능성은 12절에 정리한다. |
-| V1 설계 선택 | Python 제어부 하나, PI 연결 모듈 하나, 순차 학습 단계, SQLite와 원본 파일, Langfuse를 사용한다. |
-| 잠정 식별 | PI는 `badlogic/pi-mono`에서 연결되는 공식 PI 프로젝트를 기준으로 조사했다. 조사 시점 저장소는 `earendil-works/pi`다. 팀에서 뜻한 저장소·포크·버전의 일치 여부는 착수 시 확인한다. |
+| V1 설계 선택 | 얇은 PI extension 연결부, Python 제어부 하나, 순차 학습 단계, SQLite와 원본 파일, 로컬 Langfuse를 사용한다. |
+| 확인된 PI 대상 | 공식 `earendil-works/pi`의 coding agent extension. 팀의 최소 요구는 pi 0.84 이상이며 실제 사용할 버전은 연결 시험에서 고정한다. |
+| Langfuse 환경 | 개발자별 로컬 셀프호스팅. Python SDK v4와 필요한 TypeScript SDK v5를 기준으로 연결한다. Windows 구성은 9.1절에 명시한다. |
 | 잠정 식별 | 표기가 불확실했던 vetu는 `openai/vetu`를 조사 대상으로 삼았다. 저장소에는 Cirrus Labs 계열 경로와 설치 안내가 남아 있으므로 팀에서 사용할 배포판을 고정해야 한다. |
 
-Python 중심이라는 전제는 PI 코어까지 Python으로 재작성한다는 뜻으로 해석하지 않는다. 조사한 공식 PI 코어는 TypeScript/Node.js 기반이므로 얇은 연결 모듈을 둔다. 아래 연결 프로토콜은 **이 프로젝트에서 만들 인터페이스**이며 PI가 이미 제공하는 Python API가 아니다. [PI 코어][pi-core], [PI 패키지][pi-package]
+Python 중심이라는 전제는 PI 코어까지 Python으로 재작성한다는 뜻으로 해석하지 않는다. 공식 PI extension과 필요한 PI 런타임 연결부는 TypeScript/Node.js로 두고 학습·저장·커널 관리는 Python으로 구현한다. 아래 연결 프로토콜은 **이 프로젝트에서 만들 인터페이스**이며 PI가 이미 제공하는 Python API가 아니다. [PI extension][pi-extension], [PI 코어][pi-core]
 
 ## 3. V1에서 줄이는 범위
 
-첫 구현은 로컬 사용자 한 명, 프로젝트 하나, 동시에 실행하는 작업 하나를 대상으로 한다. UI는 CLI와 Langfuse 화면이면 충분하다. 모델·추론 설정·프롬프트·의존성 버전을 실행 기록에 남긴다.
+첫 구현은 로컬 사용자 한 명, 프로젝트 하나, 동시에 실행하는 작업 하나를 대상으로 한다. UI는 PI의 기존 화면과 Langfuse를 사용하며 Python CLI는 모듈 시험용으로 둔다. 팀 전체 실행 커맨드와 상위 루프는 이 모듈의 구현 책임이 아니다. 모델·추론 설정·프롬프트·의존성 버전을 실행 기록에 남긴다.
 
 ### 유지하는 기능
 
@@ -55,9 +66,9 @@ Python 중심이라는 전제는 PI 코어까지 Python으로 재작성한다는
 
 ```mermaid
 flowchart TD
-    U[작업 입력] --> C[Python Controller]
+    U[PI coding agent / extension] --> C[Python 학습 Controller]
     C --> X[Context Builder]
-    X --> P[PI Bridge / Agent Core]
+    X --> P[PI 역할 실행 Adapter]
     P --> T[Python Tool Dispatcher]
     T --> K[에이전트별 Jupyter Kernel]
     K --> T
@@ -79,7 +90,7 @@ flowchart TD
 | 구성요소 | 책임 |
 | --- | --- |
 | Controller | 단계 실행, 식별자·예산·취소·재개 관리, 결과 스키마 검사, 저장 트랜잭션 수행 |
-| PI Bridge | 공식 PI agent loop와 모델 호출 사용, 문맥 전달, 이벤트 전송, Python 도구 호출 중계 |
+| PI Adapter | extension과 Python의 연결, 필요한 역할 실행에 공식 PI 런타임 사용, 문맥·이벤트·도구 호출 중계 |
 | Kernel Backend | 커널 생성·코드 실행·출력 수집·중단·재시작·종료 |
 | Rollout Recorder | 실제 실행 이벤트와 근거 보존, Langfuse 관측 생성 및 전송 상태 관리 |
 | Knowledge Store | 이론 수정본·관계·검토·조사·판단·문맥 사용 이력 저장 |
@@ -94,7 +105,7 @@ Python은 형식·참조·예산·실행 가능 여부를 검사한다. 무엇�
 | Worker | 현재 과제와 선택된 이론을 사용해 작업하고 결과를 남김 | 없음 |
 | Extractor | 새 rollout과 관련 기존 이론에서 관측·요약·후보 이론·방법 가설 생성 | 없음 |
 | Reviewer | 후보와 관련 이론·근거를 검토하고 관계 및 조사 계획 제안 | 없음 |
-| Judge | 검토·관측·실험 결과에 근거한 상태 변경안과 이유 생성 | 없음. Controller가 유효한 변경안을 반영 |
+| Integrator | 검토·관측·실험 결과에 근거한 이론 상태 변경안과 이유 생성 | 없음. Controller가 유효한 변경안을 반영 |
 
 각 역할은 인격이나 상시 프로세스가 아니라 실행 역할이다. 에이전트 인스턴스마다 PI 문맥과 Jupyter kernel을 분리하고 커널은 필요할 때 생성한다. 처음에는 순차 실행하며, 에이전트 수를 늘리는 것을 품질 개선으로 간주하지 않는다.
 
@@ -102,14 +113,16 @@ Reviewer는 작업자의 전체 대화를 무조건 상속하지 않는다. 검�
 
 ### 4.2 PI와 Python의 연결
 
-V1의 기본안은 **공식 PI agent-core + 얇은 TypeScript/Node.js bridge + Python 제어부**다. PI의 코딩 전용 기본 프롬프트와 파일·셸 도구를 기본값으로 상속하지 않고, 프로젝트 역할 프롬프트와 허용한 도구를 명시한다.
+V1의 기본안은 **PI coding agent extension + 얇은 TypeScript/Node.js adapter + Python 학습 모듈**이다. 별도 최상위 코딩 에이전트를 만들지 않는다. Python은 학습 단계·저장·커널을 관리하고 extension은 상위 작업의 기록·문맥과 연결한다. 학습용 역할을 별도로 실행할 때는 역할 프롬프트와 도구를 명시한다.
 
-PI는 custom tools, 이벤트 구독, 문맥 변환과 모델 호출 함수 연결을 지원한다. 코딩 CLI의 RPC 모드도 별도 경로로 존재하지만, 이 명세는 도구 실행과 실제 입력 기록을 직접 제어하기 위해 코어 연결을 선택한다. [PI 코어][pi-core], [PI CLI RPC][pi-rpc]
+PI extension은 도구·커맨드·이벤트 훅·문맥 주입을 지원한다. extension에서 Python으로 원본 기록과 작업 요청을 넘기고 다음 문맥을 받는다. 별도 학습 역할의 모델 호출은 필요한 범위에서 PI SDK/core를 감싼 adapter가 담당할 수 있다. 코어 직접 사용은 내부 연결 선택이며 별도 제품 실행기의 요구가 아니다. 별도 역할 실행·취소·실제 입력 기록은 0단계에서 확인한다. [PI extension][pi-extension], [PI 코어][pi-core]
 
 프로젝트 bridge의 최소 메시지는 다음과 같다.
 
 | 방향 | 메시지 | 주요 내용 |
 | --- | --- | --- |
+| PI extension → Python | `learn` / `build_context` | 상위 실행 ID, rollout 참조 또는 과제, 부모 trace 문맥 |
+| Python → PI extension | `learning_result` / `context_result` | 새 지식 snapshot, 이론 변경 요약 또는 주입할 문맥과 참조 |
 | Python → PI | `run` | protocol_version, request_id, agent_id, 역할, 모델 설정, 문맥, 도구 정의, 예산 |
 | PI → Python | `event` | request_id, agent_id, event_seq, turn_id, 이벤트 종류, 내용 |
 | PI → Python | `tool_request` | call_id, 도구 이름, 인자, 실행 제한 |
@@ -119,7 +132,7 @@ PI는 custom tools, 이벤트 구독, 문맥 변환과 모델 호출 함수 연�
 
 전송은 UTF-8 JSONL 기반 양방향 stdio로 시작한다. stdout은 프로토콜 전용, 진단 로그는 stderr로 보낸다. Python은 stdout·stderr를 비동기로 읽으며 도구 응답을 보내는 동안 이벤트 수신을 막지 않는다. 커널 하나의 코드 실행은 직렬화하고 PI의 도구 실행도 V1에서는 순차 모드로 고정한다.
 
-모델 호출 직전의 PI `streamFn` 경계 등에서 변환이 끝난 system/messages/tools와 모델 설정을 기록한다. `agent.subscribe()` 이벤트만으로 최종 모델 입력 전체가 확보됐다고 가정하지 않는다. bridge 종료를 도구 실행의 취소 완료로 간주하지 않고 커널 취소 결과까지 수집한다.
+모델 호출 직전의 extension 모델 이벤트 또는 adapter의 모델 호출 경계에서 변환이 끝난 system/messages/tools와 모델 설정을 기록한다. 기록 지점 이후의 추가 변환도 연결 시험에서 확인한다. 이벤트 구독만으로 최종 모델 입력 전체가 확보됐다고 가정하지 않는다. bridge 종료를 도구 실행의 취소 완료로 간주하지 않고 커널 취소 결과까지 수집한다.
 
 ## 5. 기능별 요구사항
 
@@ -139,15 +152,18 @@ Langfuse는 rollout의 구조화된 관찰·조회·비교 화면으로 사용�
 
 | 프로젝트 개념 | Langfuse 표현 |
 | --- | --- |
-| 작업 및 관련 후속 학습 묶음 | `session_id = task_id` |
-| 작업 실행 또는 학습 실행 한 번 | trace. 학습 실행은 원 작업 ID를 연결한 별도 trace |
+| 상위 작업 묶음 | 팀에서 전달한 session ID. 독립 시험에서는 task ID |
+| 팀의 세대 실행 | 상위가 소유하는 trace에 학습 단계를 자식 observation으로 연결 |
+| 독립 시험 또는 세대 종료 후 별도 학습 | 별도 trace, 원 task/generation/trace ID를 metadata로 연결 |
 | 역할 실행 | agent 또는 span observation |
 | 모델 호출 | generation observation |
 | 커널 실행·자료 조회 | tool observation |
 | 이론 검색·문맥 구성 | retriever 또는 span observation |
-| 검토·판단·평가 | span 또는 evaluator observation, 결과와 근거 참조 기록 |
+| 이론 검토·통합 판단 | span observation, 결과와 근거 참조 기록. 팀 LLM judge를 구현하는 단계가 아님 |
 
 Langfuse는 trace/session/observation 모델과 Python SDK를 제공한다. 프로젝트 식별자는 metadata에 함께 기록하고 자식 관측에도 전파한다. LLM 호출이 Node.js에 있어도 이벤트를 Python으로 받아 하나의 계측 경로로 전송한다. 자동 계측과 수동 계측으로 같은 호출을 이중 기록하지 않는다. [Langfuse 데이터 모델][lf-model], [Sessions][lf-sessions], [Python SDK][lf-python]
+
+상위가 trace를 생성했다면 부모 trace/span 문맥을 명시적으로 전달받는다. 프로세스·언어 경계를 건너 자동 전파된다고 가정하지 않는다. 팀에서 생성한 judge 결과나 성과 지표는 원본 참조를 소비하는 것까지 담당하며, 점수 계산·judge 모델 운영은 맡지 않는다.
 
 로컬 저널에는 `event_id`, 실행별 순서, 원인 이벤트, agent/turn/call ID, payload 또는 artifact 참조를 저장한다. Langfuse trace/observation ID와의 매핑 및 전송 상태도 남긴다. 스트리밍 조각을 관측 하나씩으로 만들 필요는 없으며, 원본 저널에 보존하고 generation 결과에 묶는다.
 
@@ -201,7 +217,7 @@ V1에서 반드시 지원할 조사 경로는 **Jupyter kernel에서 실행 가�
 
 조사 상태는 `planned → running → completed / failed / interrupted`와 `deferred`를 사용한다. 실행이 불가능하거나 예산이 부족하면 이유와 다음 조건을 남기고 보류한다. 실패한 실행을 이론의 반증으로 자동 해석하지 않는다.
 
-Judge는 채택·보류·기각·유지 또는 수정안을 제시한다. 채택은 현재 조건에서 사용할 잠정 판단이다. 수정은 기존 본문 덮어쓰기가 아니라 새 수정본과 변경 이유를 만드는 동작이다. 반대 근거를 숨기지 않으며 근거 없는 수치 확신을 기본 판정 기준으로 쓰지 않는다.
+Integrator는 이론의 채택·보류·기각·유지 또는 수정안을 제시한다. 채택은 현재 조건에서 사용할 잠정 판단이다. 수정은 기존 본문 덮어쓰기가 아니라 새 수정본과 변경 이유를 만드는 동작이다. 반대 근거를 숨기지 않으며 근거 없는 수치 확신을 기본 판정 기준으로 쓰지 않는다. 이 내부 판단은 전략 결함 심사나 적합도 평가를 수행하지 않는다.
 
 전제 수정·기각 시 의존한 이론을 `needs_review`로 표시한다. 직접 의존 이론을 시작으로 필요하면 다음 의존 이론까지 전파하고 방문 집합으로 순환을 처리한다. 관련 이론을 자동 기각하지 않는다. 재검토 전에는 정상 채택 이론처럼 무조건 주입하지 않는다.
 
@@ -283,7 +299,7 @@ V1은 이 한계를 알고 사용하는 로컬 연구 환경이다. 도구 API�
 
 ## 9. 외부 사용 인터페이스와 모듈 범위
 
-첫 인터페이스는 Python CLI다. 다음 명령은 구현할 프로젝트 인터페이스이며 현재 설치된 명령이 아니다.
+팀과의 연결은 PI extension에서 Python 모듈의 `learn`과 `build_context`를 호출하는 방식이다. 상위 커맨드·전략 루프·LLM judge·하네스 진화는 외부 책임이다. 아래 Python CLI는 독립 기능 시험용으로 구현할 인터페이스이며 현재 설치된 명령이 아니다.
 
 ```text
 run-task       작업 수행과 rollout 기록
@@ -294,9 +310,111 @@ evaluate       저장된 평가 과제와 조건으로 비교 실행
 doctor         PI 연결, 커널 실행, Langfuse 기록의 연결 확인
 ```
 
-Python 모듈은 controller, pi_client, kernel_backend, rollout, knowledge, learning, context, evaluation 정도로 시작한다. 역할 프롬프트는 파일로 버전 관리하고, TypeScript 코드는 PI 코어의 연결과 이벤트·도구 중계에 제한한다.
+Python 모듈은 controller, pi_client, kernel_backend, rollout, knowledge, learning, context, evaluation 정도로 시작한다. evaluation은 이 모듈의 기능·재사용 비교 시험이며 팀의 판정기를 구현하지 않는다. 역할 프롬프트는 Langfuse prompt management의 버전과 연결하고 실제 사용 본문도 snapshot에 보존한다. TypeScript 코드는 extension 연결과 필요한 역할 실행·이벤트·도구 중계에 제한한다.
 
-Langfuse 배포 주소·자격 증명과 LLM 제공자·모델은 환경 설정으로 주입한다. V1 spec 작성이 서비스 배포나 유료 계정 생성을 포함하지 않는다. 호스팅 방식과 모델은 팀에서 사용할 환경을 연결할 때 정하고 그때 의존성 버전을 lock한다.
+Langfuse는 Windows에서 Docker Desktop으로 로컬 셀프호스팅하며 Python은 호스트에서 HTTP로 접속한다. LLM 제공자·모델과 자격 증명은 환경 설정으로 주입한다. 실제 의존성 버전은 연결 시험에서 lock한다. 이번 문서 개정은 설치·서비스 실행 완료 보고가 아니다.
+
+### 9.1 Windows에서 Langfuse 사용하기
+
+#### 실행 배치
+
+```text
+Windows 호스트
+  PI coding agent + TypeScript extension
+  Python 3.13+ / uv / 학습 모듈 / Jupyter kernels
+       │ HTTP: http://localhost:3000
+       ▼
+Docker Desktop — Linux containers
+  Langfuse web + worker
+  PostgreSQL + ClickHouse + Redis + MinIO
+  Docker named volumes에 서버 데이터 보존
+```
+
+Langfuse 공식 로컬 배포 경로는 Docker Compose이며 Windows에서는 Docker Desktop을 안내한다. 공식 Compose에는 web·worker와 위 저장·큐 서비스가 포함된다. Python SDK만 설치해서 Langfuse 서버가 생기는 것은 아니다. [공식 로컬 배포][lf-compose-guide], [조사한 Compose 원본][lf-compose-source]
+
+**PI·Python·커널은 Windows 네이티브로 유지한다.** Langfuse 서버만 Linux 컨테이너로 실행한다. 이 컨테이너들은 관찰 서비스용이며 에이전트 코드의 실행 환경을 Docker로 바꾸는 것이 아니다.
+
+| Docker 실행 방식 | V1의 취급 |
+| --- | --- |
+| Docker Desktop + WSL2 backend | 기본안. PowerShell에서 Docker를 제어하고 Windows Python에서 localhost로 접속한다. 별도의 Ubuntu 개발 배포판이나 코드 이전은 필요 없다. |
+| Docker Desktop + Hyper-V backend | WSL2를 사용하지 않으려는 경우의 대안. 해당 Windows 에디션·하드웨어와 all-users 설치 조건을 확인한다. |
+| Windows containers 모드 | 이 명세의 Langfuse Linux 이미지 실행 경로가 아님. Linux containers로 설정한다. |
+
+Docker 공식 문서는 WSL2 backend의 Windows 터미널 사용과 별도 Linux 배포판 없이 실행하는 구성을 설명한다. Hyper-V backend의 가용 조건은 설치 문서를 따른다. 베타 backend는 V1의 기본안에 포함하지 않는다. [Docker WSL2][docker-wsl], [Windows 설치 조건][docker-windows]
+
+Vetu와 달리 이 구성은 WSL 안에서 KVM VM을 다시 띄우지 않는다. 따라서 Langfuse 사용을 위해 `/dev/kvm`, Vetu, 중첩 가상화를 준비하지 않는다. 호스트 자체가 다른 VM인 특수 환경의 요구사항은 별도 확인한다.
+
+#### 저장·접속 설정
+
+- 공식 Compose를 별도 인프라 디렉토리에 확보하고 기준 commit과 컨테이너 이미지 버전·digest를 기록한다. 아래 실행 명령은 수정·고정한 Compose가 있는 디렉토리에서 사용한다.
+- ClickHouse의 데이터·로그와 PostgreSQL·MinIO·Redis 데이터는 공식 예제처럼 **named volume**을 사용한다. DB 저장 경로를 Windows 폴더에 직접 bind mount하는 방식은 V1 기본안에서 제외한다. 개발 코드와 산출물의 Windows 파일 저장은 그대로 유지한다. [Compose 원본][lf-compose-source], [Docker volumes][docker-volumes]
+- 공식 예제의 `CHANGEME` 비밀 값은 로컬에서 교체한다. Compose가 읽는 서버용 환경 설정과 Python이 읽는 SDK 프로젝트 키는 서로 다른 설정이다. 실제 값은 Git에 넣지 않는다.
+- 로컬 전용 배포의 웹 포트는 `127.0.0.1:3000:3000`으로 바인딩한다. MinIO를 호스트에 노출해야 하면 해당 포트도 localhost에 한정한다. 내부 DB 포트를 새로 공개할 필요는 없다.
+- Windows SDK의 `LANGFUSE_BASE_URL`은 `http://localhost:3000`이다. Docker 내부의 `http://langfuse-web:3000` 서비스 이름을 Windows 프로세스에 사용하지 않는다. 포트를 변경하면 SDK·웹 URL 설정을 함께 맞춘다.
+- 먼저 텍스트 trace와 로컬 artifact 참조를 연결한다. MinIO로 직접 미디어를 업로드하는 기능은 V1 필수가 아니며, 추가할 때 호스트와 Docker 내부 endpoint 차이를 검증한다.
+
+#### 설치 후 연결 순서
+
+1. Docker Desktop을 설치하고 Linux containers 엔진을 실행한다. backend·Windows 지원 조건과 사용 가능한 자원을 확인한다.
+2. 공식 Compose의 버전, 비밀 값, localhost 바인딩, named volume 구성을 확정한다.
+3. PowerShell에서 서비스를 시작하고 상태와 로그를 확인한다.
+
+```powershell
+docker version
+docker compose version
+docker compose up -d
+docker compose ps
+docker compose logs --tail 50 langfuse-web langfuse-worker clickhouse
+```
+
+4. 브라우저에서 `http://localhost:3000`을 열고 로컬 사용자·프로젝트를 만든 뒤 프로젝트의 public/secret API key를 발급한다. 계정 비밀번호와 SDK secret key를 혼동하지 않는다.
+5. Windows Python 프로세스에 SDK 설정을 제공하고 LLM을 호출하지 않는 연결 시험을 수행한다. 아래 키는 자리표시자다. 실제 값은 로컬 비밀 설정에 보관한다.
+
+```powershell
+$env:LANGFUSE_BASE_URL = 'http://localhost:3000'
+$env:LANGFUSE_PUBLIC_KEY = '<local-project-public-key>'
+$env:LANGFUSE_SECRET_KEY = '<local-project-secret-key>'
+```
+
+예를 들어 다음 내용을 `scripts/langfuse_smoke.py`로 구현해 확인할 수 있다. 이 문서 개정에서 해당 스크립트를 설치·실행한 것은 아니다.
+
+```python
+from uuid import uuid4
+from langfuse import get_client
+
+client = get_client()
+name = f"windows-smoke-{uuid4().hex}"
+with client.start_as_current_observation(
+    as_type="span",
+    name=name,
+    input={"source": "windows-native-python"},
+) as span:
+    span.update(output={"ok": True})
+client.flush()
+print(f"조회할 trace 이름: {name}")
+```
+
+```powershell
+uv run --with 'langfuse>=4,<5' scripts/langfuse_smoke.py
+```
+
+위 버전 범위는 최초 연결 시험용이다. 프로젝트에 통합할 때는 검증한 정확한 SDK 버전을 uv lock에 고정한다. SDK 생성·갱신·flush 사용법과 uv 실행은 공식 문서를 기준으로 한다. [Python SDK][lf-python], [uv script 실행][uv-scripts]
+
+6. 출력된 고유 이름으로 Langfuse에서 입력·출력을 조회한다. 이어서 실제 모델 호출과 커널 도구 호출의 부모·자식 관계를 확인한다. `flush()` 호출 또는 UI 접속만으로 전체 계측 성공을 판정하지 않는다.
+7. `docker compose stop` 후 `docker compose start`로 재시작하고 기록이 유지되는지 확인한다. 컨테이너를 재생성할 때도 같은 Compose project 이름과 volume을 사용한다. 일상 종료는 `docker compose down`까지 사용하며, 데이터를 지우는 `down -v`는 사용하지 않는다. named volume은 지속 저장이며 별도 백업을 대신하지 않는다.
+
+#### 완료 기준과 문제 구분
+
+| 확인할 문제 | 먼저 확인할 것 |
+| --- | --- |
+| Docker에 연결되지 않음 | Desktop 실행, 선택한 backend의 준비 상태, Linux containers 모드 |
+| UI에 접속되지 않음 | 컨테이너 상태·로그, localhost 포트 충돌·매핑 |
+| ClickHouse가 시작되지 않음 | named volume 사용, 로그의 실제 원인, 자원·디스크. 데이터 폴더 삭제를 첫 해결책으로 삼지 않음 |
+| SDK 인증 실패 | 동일한 로컬 프로젝트의 키인지, base URL이 맞는지 |
+| 전송했지만 trace가 안 보임 | worker 상태·전송 오류·비동기 반영 지연을 구분하고 제한된 시간 내 재조회 |
+| 재시작 후 기록이 사라짐 | Compose project 이름·volume 변경 여부와 영속성 설정 |
+
+**이 단계의 완료 증거는 Windows Python에서 보낸 trace의 서버 조회와 재시작 후 보존이다.** Docker 설치, Compose 시작, SDK 호출 성공은 각각 중간 확인이다. Langfuse 자체의 LLM judge·자동 평가 기능을 설정하는 것은 이 모듈의 V1 요구가 아니다.
 
 ## 10. 수용 기준과 학습 평가
 
@@ -307,6 +425,7 @@ Langfuse 배포 주소·자격 증명과 LLM 제공자·모델은 환경 설정�
 | PI–Python 연결 | 실제 PI 모델 호출에서 Python 도구를 실행하고 결과를 다음 모델 턴에 반환한다. 실제 입력과 이벤트가 연결된다. |
 | 에이전트별 커널 | A의 Python 변수가 B에는 없고 A에서는 유지된다. 재시작 후 상태 유실이 기록된다. OS 파일 접근 차단을 기대하는 테스트는 아니다. |
 | F1 기록 | 오류·중단·도구 출력·실제 문맥을 원본으로 조회하며 Langfuse에서도 대응 trace와 관측을 확인한다. |
+| Windows Langfuse | 로컬 Linux 컨테이너 서비스에 Windows SDK로 전송하고 조회한다. 재시작 후 기록이 유지되며 상위 trace와의 연결이 확인된다. |
 | F2 추출 | 관측·해석·가설이 구분되고 모든 생성물의 출처를 찾을 수 있다. 같은 원근거가 독립 증거로 중복 집계되지 않는다. |
 | F3 검토 | 숨은 전제·적용 범위 문제·경쟁 설명을 다루며, 상상한 반례가 실측으로 기록되지 않는다. |
 | F4 조사 | 다른 예측을 실행 전에 저장하고 실제 커널 결과를 수집해 상태 변경 또는 보류까지 이어진다. 의존 이론에 재검토 표시가 전파된다. |
@@ -321,7 +440,7 @@ Langfuse 배포 주소·자격 증명과 LLM 제공자·모델은 환경 설정�
 1. 첫 경험에서 H1과 H2를 후보로 만든다.
 2. Reviewer가 둘을 구분할 조건과 사전 예측을 제안한다.
 3. 실제 환경 도구에서 A를 유지하고 B를 바꾸는 확인을 실행한다.
-4. Judge가 이론을 수정·보류·채택하고 근거를 기록한다.
+4. Integrator가 이론을 수정·보류·채택하고 근거를 기록한다.
 5. “자료를 더 모으기 전에 예측이 갈리는 조건을 찾는다” 같은 방법 가설도 후보로 남긴다.
 6. 이름·값·조건이 달라진 새 과제에서 관련 이론과 방법을 선택해 사용한다.
 
@@ -339,7 +458,7 @@ Langfuse 배포 주소·자격 증명과 LLM 제공자·모델은 환경 설정�
 
 학습에 쓴 과제와 전이 평가 과제는 분리한다. 평가 시작 전에 Knowledge Store snapshot을 고정하고, 개별 평가 과제는 새 PI 문맥·커널에서 실행한다. 평가 정답을 후속 학습 입력으로 돌리지 않는다.
 
-측정 항목은 과제 성공·정확도, 잘못된 일반화, 유용한 추가 관측 선택, 도구 호출·토큰·시간, 방법 가설의 사용 결과다. 시험 시점 비용과 사전 학습 비용을 분리해서 함께 보고한다. 모델 자체의 성공 선언만을 성능 점수로 쓰지 않고 환경의 관측 가능한 결과와 평가 규칙을 사용한다. 이는 연구 효과 측정이며, 운영 중 각 이론의 채택 판단을 외부 정답표로 대체하는 것은 아니다.
+측정 항목은 과제 성공·정확도, 잘못된 일반화, 유용한 추가 관측 선택, 도구 호출·토큰·시간, 방법 가설의 사용 결과다. 시험 시점 비용과 사전 학습 비용을 분리해서 함께 보고한다. 소규모 시험은 관측 가능한 결과로 확인하며 별도 LLM judge를 만들지 않는다. 팀 과제에서 평가할 때는 팀이 제공하는 판정·지표를 연결하고, 백테스트나 judge 자체를 이 모듈에 구현하지 않는다. 운영 중 각 이론의 채택 판단을 외부 정답표로 대체하는 것은 아니다.
 
 초기 소규모 사례로 기능을 확인한 뒤 여러 과제·반복 실행의 결과와 변동을 보고한다. 단일 성공을 일반적 개선으로 보고하지 않는다. 개선이 없거나 악화돼도 원인을 살필 수 있는 평가가 V1의 산출물이다.
 
@@ -347,7 +466,7 @@ Langfuse 배포 주소·자격 증명과 LLM 제공자·모델은 환경 설정�
 
 | 단계 | 결과물과 통과 기준 |
 | --- | --- |
-| 0. 연결 확인 | 사용할 PI 버전 식별·고정, Python↔PI 도구 왕복, 두 커널의 상태 분리, Langfuse trace 조회 |
+| 0. 연결 확인 | PI extension↔Python 호출과 역할 실행, 두 커널 상태 분리, Windows 로컬 Langfuse 기동·호스트 SDK 전송·trace 조회 |
 | 1. 경험·상태 저장 | 원본 기록, 최소 스키마, 이론 수정본·관계·문맥 snapshot의 저장·조회 |
 | 2. 추출·검토·판단 | 역할별 출력 계약, 논리 연산 선택, 관련 이론 탐색, 채택·보류·기각·수정 |
 | 3. 실제 조사 연결 | 사전 예측 저장, 커널 실험, 결과 재판단, 의존 이론 재검토 |
@@ -427,10 +546,10 @@ close(agent_id)
 
 이 문서를 작성하는 데 추가 결정이 필수적인 부분은 잠정값으로 드러내고, 연결 확인 단계에서 해결한다.
 
-- 팀에서 의미한 PI 저장소·포크·버전. 이 문서는 공식 PI 코어를 기준으로 함.
-- Python 주 언어 원칙 아래 얇은 TypeScript bridge를 사용하는 현재 선택과 팀 실행 환경의 적합성.
+- 사용할 PI coding agent의 정확한 버전과 extension에서 학습용 역할을 실행하는 연결 방식.
+- Windows의 Docker Desktop 설치 여부, WSL2 또는 Hyper-V backend 가용 여부와 로컬 자원.
 - LLM 제공자·모델과 토큰·시간·비용 상한.
-- Langfuse 프로젝트와 endpoint, SDK/서버 조합, 보존 정책. 자격 증명은 문서나 rollout에 넣지 않음.
+- 로컬 Langfuse 프로젝트·SDK/서버 고정 버전·보존 정책. 호스팅 방식은 9.1절의 로컬 Docker로 정하며 자격 증명은 문서나 rollout에 넣지 않음.
 - 첫 실험 과제 묶음과 성공·오류를 측정할 규칙.
 - Vetu 후속 검증 여부. Windows 기본 V1의 구현 선행 조건은 아님.
 
@@ -443,15 +562,23 @@ close(agent_id)
 | PI | `earendil-works/pi` commit `400d6905ce46ec46e79da8a7701b1b48850192df`; 확인한 agent package version `0.85.1`, Node 요구 `>=22.19.0` |
 | Vetu | `openai/vetu` commit `8a1e5f639b6529f06754193e55ff1bc2a61765fe` |
 | WSL 서비스 소스 | `microsoft/WSL` commit `03f6b0e5dd8bdbcb90406813699f616534a25eb3` |
-| Langfuse | 2026-09-10에 확인한 공식 데이터 모델·Sessions·Python SDK 문서. 구현 시 설치 버전과 서버 호환성을 별도로 고정 |
+| Langfuse | 공식 문서 및 Compose commit `2c44151e2a1fe8736b3e73b087c761ae2a1edabc`. SDK는 Python v4·TypeScript v5 계열로 시작하고 실제 버전을 연결 시험에서 고정 |
+| Docker Desktop | 2026-09-10에 확인한 공식 Windows 설치·WSL2·volume 문서. 설치된 버전과 backend는 실제 연결 시 확인 |
 | Jupyter | 2026-09-10에 확인한 stable jupyter_client 문서(표시 버전 8.10.0). 실제 설치 버전은 연결 시험 후 고정 |
 
 [pi-core]: https://github.com/earendil-works/pi/blob/400d6905ce46ec46e79da8a7701b1b48850192df/packages/agent/README.md
 [pi-package]: https://github.com/earendil-works/pi/blob/400d6905ce46ec46e79da8a7701b1b48850192df/packages/agent/package.json
 [pi-rpc]: https://github.com/earendil-works/pi/blob/400d6905ce46ec46e79da8a7701b1b48850192df/packages/coding-agent/docs/rpc.md
+[pi-extension]: https://pi.dev/docs/latest/extensions
 [lf-model]: https://langfuse.com/docs/observability/data-model
 [lf-sessions]: https://langfuse.com/docs/observability/features/sessions
 [lf-python]: https://python.reference.langfuse.com/langfuse
+[lf-compose-guide]: https://langfuse.com/self-hosting/deployment/docker-compose
+[lf-compose-source]: https://github.com/langfuse/langfuse/blob/2c44151e2a1fe8736b3e73b087c761ae2a1edabc/docker-compose.yml
+[docker-wsl]: https://docs.docker.com/desktop/features/wsl/
+[docker-windows]: https://docs.docker.com/desktop/setup/install/windows-install/
+[docker-volumes]: https://docs.docker.com/engine/storage/volumes/
+[uv-scripts]: https://docs.astral.sh/uv/guides/scripts/
 [jupyter-api]: https://jupyter-client.readthedocs.io/en/stable/api/jupyter_client.html
 [jupyter-kernels]: https://jupyter-client.readthedocs.io/en/stable/kernels.html
 [jupyter-messaging]: https://jupyter-client.readthedocs.io/en/stable/messaging.html
