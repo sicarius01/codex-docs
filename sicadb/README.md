@@ -4,7 +4,7 @@ Rust로 만드는 범용 값·배열·함수·테이블·메시지 런타임. HF
 
 ## 현재 상태
 
-- **2026-09-22 — hot path 재설계 결정·계획 문서화.** 전체 시장 546 endpoint 실 UDP 실행에서 패킷당 818µs·p99 0.5초가 관측됐고(원본 Rust 엔진은 2.87~5.2µs), 원인은 패킷마다 APL 인터프리터 실행·포트당 스레드 546개·문자열 키 값 모델·매초 NAS fsync 로 좁혀졌다. 결정(공유메모리 유지 + 단일 writer 열 벡터 링, append-only, OMS 큰 DLL(전략 제외), 샤드 스레딩, Sym interning, APL 은 값 모델 → 실행기 → 측정 후 벡터화)과 계획·착수 전 대기 항목은 [hot path 재설계](hot-path-redesign-2026-09-22.md)에 기록한다. 구현은 미착수다.
+- **2026-09-22 — hot path 재설계 결정·계획 문서화.** 전체 시장 546 endpoint 실 UDP 실행에서 패킷당 818µs·p99 0.5초가 관측됐고(원본 Rust 엔진은 2.87~5.2µs), 원인은 패킷마다 APL 인터프리터 실행·포트당 스레드 546개·문자열 키 값 모델·매초 NAS fsync 로 좁혀졌다. 결정(공유메모리 유지 + 단일 writer 열 벡터 링, append-only, OMS 큰 DLL(전략 제외, 이론가 벡터 호출), 샤드 스레딩, strict 벡터 fan-out, Sym interning, 타입 열 계약을 먼저 고정한 뒤 링·APL 값 모델·compute 커널 병렬)과 계획·결정 사항은 [hot path 재설계](hot-path-redesign-2026-09-22.md)에 기록한다. 구현은 미착수다.
 - **2026-09-17 — 공유 메모리 통합 요구사항과 검증 계획 문서화·독립 검토 완료.** Windows 11 x64/MSVC를 주 대상으로 하고 Windows 10 feeding/batch 가능 범위를 별도 실기 검증한다. 같은 호스트 live 시세·피처·1초 테이블·배치 전달은 공유 메모리를 기본으로 하며, TCP는 원격 호스트와 선택적 제어·호환 경로다. 세부 계약은 [공유 메모리 런타임 계약](shared-memory-runtime-contract.md), 검증 순서는 [공유 메모리 검증 계획](shared-memory-validation-plan.md)에 기록한다. 구현·실행 검증은 아직 시작하지 않았다.
 - **2026-09-17 — 프로세스 간 대기형 락 비교 측정 완료.** 같은 Win32 Mutex의 인계 지연 합산 p50은 스레드 8.0µs·프로세스 8.7µs였다. 별도 진단의 18개 case와 warmup이 통과했고 원시 표본 601,206개를 독립 감사했다. 측정 보고서 (프로젝트 내부 문서: ipc-lock-probe-results-2026-09-17.md)에 무경쟁 비용·대기 CPU·한계와 NAS→RAM/HDD·DLL 선택을 정리했다. 개발 PC의 제한된 관측이며 OMS 다중 작성자 설계와 운영 코드는 변경하지 않았다.
 - **2026-09-16 — 제어 지연 진단·재검증 완료.** 최신 진단 결과 (프로젝트 내부 문서: pacing-diagnosis-results-2026-09-16.md)를 먼저 읽는다. 별도 observer/host와 sleep 대조군을 구현하고 원래 바이너리도 재실행했다. 생산 core·Arrow·worker·IPC·service 47개 파일은 변경하지 않았다.
