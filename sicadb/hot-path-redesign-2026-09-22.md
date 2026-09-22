@@ -8,7 +8,7 @@
 
 2026-09-22 전체 시장(546 endpoint) 실행에서 패킷당 처리 818µs, p99 0.5초, max 3.2초가 관측됐다. 원본 hft-oms_rust 는 같은 계산을 2.87µs(합성)·5.2µs(실캡처 replay) 에 한다. 원인은 저장소가 아니라 (1) 패킷마다 APL 인터프리터를 도는 조립 방식, (2) 포트당 스레드 546개, (3) 문자열 키 레코드와 문자열화된 숫자, (4) 매초 NAS fsync 와 RAM 회수의 NAS 결합이다.
 
-결정은 다음과 같다. 공유메모리 기반은 유지하고 테이블 종류를 «단일 writer 열 벡터 링» 으로 바꾼다. 모든 쓰기는 append-only 다. OMS 는 전략(이론가)을 포함하지 않는 큰 DLL 로 두고 orders 는 사후 분석용 로그만 남긴다. 스레딩은 코어 수 이하의 샤드로 간다. 문자열은 interned Sym 으로 바꾼다. APL 은 인터프리터 코어(값 모델 → 실행기)를 먼저 고치고, 측정한 뒤 벡터화를 결정하며, 패킷 경로에서는 attach 때 정한 네이티브 호출 순서표를 직접 탄다.
+결정은 다음과 같다. 공유메모리 기반은 유지하고 테이블 종류를 «단일 writer 열 벡터 링» 으로 바꾼다. 모든 쓰기는 append-only 다. OMS 는 전략(이론가)을 포함하지 않는 큰 DLL 로 두고 orders 는 사후 분석용 로그만 남긴다. 스레딩은 코어 수 이하의 샤드로 간다. 문자열은 interned Sym 으로 바꾼다. 계산 모델은 kdb 처럼 **벡터 기반** 이다. 참조 심볼이 바뀌면 의존 심볼 전부를 건너뛰지 않고(strict) 벡터 연산 한 번으로 재계산한다. APL 은 인터프리터 코어(값 모델 → 실행기)를 먼저 고치고, 측정한 뒤 벡터화를 결정하며, 패킷 경로에서는 attach 때 정한 네이티브 호출 순서표를 직접 탄다.
 
 ## 1. 배경: 2026-09-22 실행에서 확인된 사실
 
@@ -50,8 +50,8 @@
 ## 2. 목표
 
 - 패킷당 처리 **10µs 이하** (테이블 게시 포함). 장기 목표는 원본 수준 2.87~5.2µs.
-- **이벤트 즉시 처리.** 타이머 배치 없음. 이론가는 패킷마다 갱신되고, 참조하는 심볼로 전파된다.
-- «컴파일 없이 조립» 은 유지하되 **패킷 경로에 인터프리터가 없다.**
+- **이벤트 즉시 처리.** 타이머 배치 없음. 이론가는 패킷마다 갱신되고, 참조하는 심볼로 전파된다. 전파는 중간 상태를 건너뛰지 않는다(strict).
+- «컴파일 없이 조립» 은 유지한다. 패킷 경로에서 인터프리터를 빼는 것(A)은 필수 목표가 아니라 수단이다. 10µs 이하가 인터프리터를 남긴 채로 달성되면 그대로 둔다(2026-09-22 사용자 결정).
 - OMS 의 다중 writer·락·스레드·상태 전이 의미는 DLL 안에서 그대로 보존한다.
 - 저장은 **append-only**, NAS 에 대량 단위로 쓴다.
 - hot path 에 문자열이 없다.
@@ -68,11 +68,13 @@
 
 **D4. append-only.** 메모리 링은 append 와 head 전진만. 디스크 세그먼트는 한 번 쓰면 불변. 수정이 필요하면 블록·세그먼트를 새 버전으로 통째로 쓰고 새 세대 포인터가 가리키며 옛것은 GC. `manifest.txt` 재작성은 세대 파일(`manifest-<n>`) 또는 디렉터리 목록 + footer 로 대체한다. 카탈로그 `rev-N.txt` 는 이미 불변이라 유지. 이로써 rename 폭주와 매초 fsync 가 사라지고 ADR0024 (프로젝트 내부 문서: docs/adr/0024-cross-process-metadata-locks-for-smb-publication.md) 의 파일 락은 폐기한다. 기각: bounded retry, `ReplaceFileW`, 전역 I/O 게이트(전부 NAS(SMB) 프로브에서 실패하거나 병목).
 
-**D5. OMS 는 큰 DLL 이며 전략(이론가)을 포함하지 않는다.** «전략» = 이론가 생성(OMS 바깥). «OMS 전략» = 이론가를 받아 주문 생성·관리(DLL 안). 경계 계약은 (종목, 시각, 이론가, 필요 시 신뢰도·상태) 를 넘기는 호출 하나다. OMS 내부 상태(`id_sets → order_map` 중첩 락, `Inventory`·`Wallet`·`IdMap` parking_lot mutex, reconcile·rate limiter 스레드)는 원본 그대로 DLL 안에 있다. orders/fills 는 사후 분석용 append-only 이벤트 로그로만 기록한다(DLL 안 로거 스레드 하나가 writer). 원본 판단 로직을 actor/큐로 옮기는 재작성은 하지 않는다. 주의: matching-engine-dll-apl-composition.md (프로젝트 내부 문서: docs/design/matching-engine-dll-apl-composition.md) 의 «DLL 은 작게» 는 범용 연산에 대한 원칙이고, OMS 는 도메인 상태기계라 예외라는 논리로 문서를 고쳐야 한다.
+**D5. OMS 는 큰 DLL 이며 전략(이론가)을 포함하지 않는다.** «전략» = 이론가 생성(OMS 바깥). «OMS 전략» = 이론가를 받아 주문 생성·관리(DLL 안). 경계 계약은 (종목, 시각, 이론가, 필요 시 신뢰도·상태) 의 **벡터(배치)** 를 넘기는 호출 하나다. 참조 심볼 하나가 바뀌어 의존 심볼 100개의 이론가가 한꺼번에 갱신되면 DLL 호출도 100번이 아니라 한 번이고, «이론가가 임계 이상 움직인 것만» 골라내는 필터는 DLL 안에서 벡터로 한다(D7). OMS 내부 상태(`id_sets → order_map` 중첩 락, `Inventory`·`Wallet`·`IdMap` parking_lot mutex, reconcile·rate limiter 스레드)는 원본 그대로 DLL 안에 있다. orders/fills 는 사후 분석용 append-only 이벤트 로그로만 기록한다(DLL 안 로거 스레드 하나가 writer). 원본 판단 로직을 actor/큐로 옮기는 재작성은 하지 않는다. 주의: matching-engine-dll-apl-composition.md (프로젝트 내부 문서: docs/design/matching-engine-dll-apl-composition.md) 의 «DLL 은 작게» 는 범용 연산에 대한 원칙이고, OMS 는 도메인 상태기계라 예외라는 논리로 문서를 고쳐야 한다.
 
 **D6. 스레딩 = 샤드.** 코어 수 이하(8~16)의 스레드가 각각 종목 묶음을 독점 소유한다. 같은 종목의 모든 포트는 같은 샤드. 샤드는 자기 포트 묶음을 `WSAPoll` 하나로 기다리고 그 자리에서 콜백 처리하며, 같은 루프에서 inbox(D7)를 비운다. 배정은 시작 시 feeding 통계의 포트별 패킷 비율로 정하고 실행 중 고정, 재분배는 재시작. 전체 OS 스레드는 샤드 + OMS DLL 스레드 + recorder + 제어를 합쳐 30개 안쪽. `execution_gate` 는 정의상 사라진다. 기각: 포트당 스레드(546), tokio 태스크(work-stealing 이 종목 친화성과 캐시 지역성을 깨고 reactor 홉이 하나 더 있음).
 
-**D7. cross 전파 = 링 직접 읽기 + 샤드 inbox.** 심볼 B 의 이론가는 B 의 소유 샤드만 쓴다. A 의 패킷이 오면 A 의 샤드는 A 를 참조하는 심볼들이 있는 샤드마다 inbox 에 «A 바뀜» 메시지 하나(MPSC, 수십 ns)를 넣는다. 각 샤드는 자기 루프에서 inbox 를 비우며 의존 심볼의 이론가를 재계산하고 OMS DLL 을 부른다. A 의 최신값은 A 의 링을 lock-free 로 읽는다. 원본 dep_map/triggered finals 를 샤드 경계에 맞게 옮긴 것이다. §7 의 coalescing 결정이 남아 있다.
+**D7. cross 전파 = strict + 벡터 fan-out (2026-09-22 결정).** 심볼 B 의 이론가는 B 의 소유 샤드만 쓴다. A 의 패킷이 오면 A 의 샤드는 A 를 참조하는 심볼들이 있는 샤드마다 inbox 에 «A 바뀜» 메시지 하나(MPSC, 수십 ns)를 넣는다. 받은 샤드는 메시지를 **순서대로 전부** 처리하며, 메시지 하나당 자기 의존 심볼 N 개의 이론가를 **벡터 연산 한 번** 으로 다시 쓴다. 의존 심볼은 열 지향 테이블의 행이고 이론가 재계산은 그 열들에 대한 연산이다(kdb 의 `update theo: f[...] from deps where ref=A` 와 같은 모양). A 의 최신값은 A 의 링을 lock-free 로 읽는다. 중간 상태를 합치거나 건너뛰지 않는다. 밀리면 kdb 의 slow subscriber 처럼 inbox 가 길어지고 지연이 늘 뿐 누락은 없다. 과부하 보호(큐 길이 감시, 상한 시 정책)는 별도 결정. 조건: 이론가 함수가 심볼 축으로 벡터화 가능해야 하고(심볼마다 다른 분기가 많으면 안 됨. 원본 cross 는 shape 17개로 수식 4,726개를 덮었다), OMS DLL 은 (심볼, 이론가) 벡터를 한 번에 받아야 한다(D5). 비용 추정: BTC 초당 5,000 패킷 × 샤드 12개 × 벡터 연산 수 µs ≈ 코어 0.3개. 기각: coalescing(최신값으로 한 번만 재계산. 중간 상태를 건너뛰어 사용자가 거부), 참조 심볼 샤드가 의존 심볼 이론가를 직접 쓰는 방식(단일 writer 위반).
+
+**D12. 계산 모델 = 벡터 기반.** 피처·이론가 계산은 «심볼 하나에 스칼라 함수 호출» 이 아니라 «심볼 묶음에 열 연산» 으로 구성한다. 링 테이블(D2)의 열이 그 입력이고, D7 의 fan-out 이 그 첫 사용처다. APL 인터프리터의 타입 벡터화(B6)는 §5.1 의 측정 게이트를 그대로 두되, 파이프라인이 벡터 기반이면 B6 로 가는 것이 자연스럽다.
 
 **D8. 발행은 즉시.** append 가 head 를 올리는 순간 소비자가 본다. 타이머 없음. 깨우기는 소비자가 «잔다» 플래그를 세운 경우에만 `SetEvent` 를 부른다(따라오는 동안 syscall 0). 패킷마다 named event 를 쏘던 push 는 폐지.
 
@@ -89,7 +91,7 @@
 | 값 | 타입 벡터, interned sym, refcount 포인터 전달 | 동일하게 간다 (D9, B6) |
 | 인메모리 테이블 쓰기 | 프로세스당 메인 스레드 하나만 쓴다. `peach`·멀티스레드 입력은 읽기 전용(`noupdate`). 락이 없는 게 아니라 동시성이 없다 | 테이블당 writer 하나 (D2). 다른 스레드는 요청을 보낸다 |
 | 프로세스 간 | 공유메모리 없음. IPC 로 사본 전달 | shmem 링 직접 읽기 (D1) |
-| cross | 필요한 심볼을 전부 구독해 로컬 사본으로 계산. 동기 IPC 조회는 hot path 에 안 씀 | 링 직접 읽기 + inbox (D7) |
+| cross | 필요한 심볼을 전부 구독해 로컬 사본으로 계산. 메시지는 순서대로 전부 처리(건너뛰기 없음). 의존 재계산은 테이블 한 번의 벡터 연산. 밀리면 송신 큐가 쌓임(slow subscriber) | 링 직접 읽기 + inbox, strict, 벡터 fan-out (D7) |
 | 배치 | tickerplant `-t` 타이머, `-t 0` = zero-latency 모드 | 타이머 없음 (D8) |
 | 인터프리터 | 인터프리터다(공개 범위에서 JIT 없음). 프리미티브가 C 벡터 루프라 해석 비용이 원소에 분산 | B = kdb 값 모델 + 평탄 tape |
 | 병렬 | 프로세스 여러 개 + 읽기 전용 스레드. «코어당 프로세스 하나» 는 관행이지 규칙이 아님 | 샤드 스레드 (D6) |
@@ -117,13 +119,13 @@ attach 때 APL 이 종목별로 «커널·window·파라미터·순서» 를 결
 
 `sicadb-shmem` 에 새 테이블 종류 추가(1~2천 줄 규모). pool 위에 col-major 배열 + atomic head. writer API(append), reader API(구간 읽기 + generation 검증), `sicadb-compute` 의 `WindowColumns` 를 이 링 위에 직접 구현. 기존 S8-a 테이블은 그대로 둔다.
 
-### 5.4 샤드 + inbox (D6, D7)
+### 5.4 샤드 + inbox + 벡터 fan-out (D6, D7, D12)
 
-`port_workers.rs` 를 샤드 루프로 교체. 배정표 생성(feeding 통계 기반), 샤드당 소켓 묶음 `WSAPoll`, inbox MPSC, 코어 affinity. `matching_*` 모듈은 링 위에서 다시 쓴다(현재 18,000줄 중 상당수가 사라진다).
+`port_workers.rs` 를 샤드 루프로 교체. 배정표 생성(feeding 통계 기반), 샤드당 소켓 묶음 `WSAPoll`, inbox MPSC, 코어 affinity. 샤드는 자기 의존 심볼을 열 지향 테이블(심볼 = 행)로 들고, «A 바뀜» 메시지 하나에 그 테이블의 A 의존 행 전체를 벡터 연산으로 재계산한다. inbox 길이를 관측값으로 남긴다. `matching_*` 모듈은 링 위에서 다시 쓴다(현재 18,000줄 중 상당수가 사라진다).
 
 ### 5.5 OMS DLL 경계 (D5)
 
-입력: (종목, 시각, 이론가, 부가 상태). 출력: 주문·체결 이벤트 로그(append-only 링). DLL 은 자기 스레드·락을 가진다. ABI 는 기존 `sicadb-plugin-abi` 규칙(`#[repr(C)]`, `struct_size`, 버전, host 소유 출력 버퍼, panic 차단) 을 따른다.
+입력: (종목, 시각, 이론가, 부가 상태) 의 벡터. 출력: 주문·체결 이벤트 로그(append-only 링). DLL 은 자기 스레드·락을 가진다. ABI 는 기존 `sicadb-plugin-abi` 규칙(`#[repr(C)]`, `struct_size`, 버전, host 소유 출력 버퍼, panic 차단) 을 따른다.
 
 ### 5.6 recording 교체 (D11)
 
@@ -140,14 +142,14 @@ attach 때 APL 이 종목별로 «커널·window·파라미터·순서» 를 결
 - BTC/ETH 실 UDP 8,192 패킷 → 원본 record oracle 72-row exact 비교(`matching-record-oracle`). 덩어리마다 재실행.
 - 성능: B0 벤치(패킷당 µs, 할당 수), capture-off 5+30초 실행의 stage 표, `run-metadata.json` 의 프로세스 CPU 샘플(코어 사용률). 숫자는 심볼·워커 수와 함께 기록하고 평균으로 뭉개지 않는다.
 
-## 7. 착수 전 결정 대기
+## 7. 착수 전 결정 (2026-09-22 사용자 답변 반영)
 
-1. **Codex 미커밋 트리 백업.** sicadb 18 파일 + market-ingest 약 2만 줄이 working tree 에만 있다. 브랜치 또는 백업 커밋으로 먼저 묶는다.
-2. **서브에이전트 사용 허용 여부.** 조사 단계는 단일 세션이었으나 덩어리 1 은 며칠짜리 구현이다.
-3. **cross 전파 coalescing.** BTC 처럼 전역 의존 심볼은 패킷 하나가 1,600개 재계산을 부른다(초당 수백만). inbox drain 한 번에 같은 «A 바뀜» 을 합쳐 «최신값으로 한 번만 재계산» 하는 것을 허용할지. 원본의 «1-tick lag read» 에 해당한다.
-4. **SSD 중간층 여부와 NAS 쓰기 단위.** 지금 병목은 대역폭이 아니라 쓰기 패턴이므로 패턴만 바꿔 NAS 직접을 유지하는 안이 기본. HDD 는 rename 의미와 무관하고 fsync 지연만 더 나쁘다.
-5. **이론가 갱신 정책 상세.** 패킷마다 갱신은 확정. 전파 범위와 coalescing 은 3번과 함께.
-6. **matching-engine-dll-apl-composition.md (프로젝트 내부 문서: docs/design/matching-engine-dll-apl-composition.md) 의 «작은 DLL» 원칙에 OMS 예외를 명시.**
+1. **Codex 미커밋 트리 커밋.** 결정: 커밋한다. 단일 커밋이 아니라 논리 단위로 나눠 커밋한다(shmem / compute·APL bridge / recording 락 실험 / 문서 등). 실험 로그·python 스크립트·백업 파일은 커밋에서 제외한다.
+2. **서브에이전트.** 결정: 구현에 Sonnet(Luna) 서브에이전트를 써도 된다. 단, 문제 해결(원인 분석·설계 판단·막힌 곳 뚫기)은 서브에이전트에 맡기면 느리고 토큰을 많이 쓰므로 메인 모델이 직접 더 많이 개입한다.
+3. **cross 전파.** 결정: coalescing 하지 않는다. kdb 처럼 메시지를 전부 순서대로 처리하고, 의존 심볼 재계산을 벡터 연산 한 번으로 만들어 비용을 없앤다(D7, D12). 과부하 시 정책(큐 길이 상한·감시)은 별도 결정.
+4. **SSD 중간층.** 결정: 중간층 없이 간다. NAS 직접 쓰기를 유지하고 쓰기 패턴(append-only, 대량 단위, rename 없음)만 바꾼다. NAS 쓰기 단위(시간·바이트)는 recording 상세 설계에서 정한다.
+5. **이론가 갱신 정책 상세.** 결정: 패킷마다 갱신, 참조 심볼 변화는 의존 심볼 전부에 strict 전파, OMS 에는 벡터로 전달(D5, D7). 남은 것은 이론가 함수를 심볼 축으로 벡터화할 수 있는지의 확인이며, 원본 cross shape 17개를 기준으로 검토한다.
+6. **«작은 DLL» 원칙의 OMS 예외.** 결정: 명시한다. matching-engine-dll-apl-composition.md (프로젝트 내부 문서: docs/design/matching-engine-dll-apl-composition.md) 에 반영.
 
 ## 8. 관련
 
