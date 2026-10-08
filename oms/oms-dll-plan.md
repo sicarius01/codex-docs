@@ -216,6 +216,44 @@ destroy(instance)
 - `PACKET` 호출 입력에 그 메시지의 행(열 배열: 매수/매도, 가격, 수량)과 그 메시지의 L3 이벤트(열 배열: 종류, 방향, 가격, 수량, 시각)를 싣는다. 대상 종목의 호가창은 호출 전에 이미 그 메시지까지 반영돼 있다(같은 스레드).
 - 가격·수량은 지금 `Books`와 같은 f64(거래소 단위)로 주고받는다 — runner와 비트 단위로 같은 값이 나오게(V2).
 
+### 4.3b P0 초안 — 호스트 함수표와 PACKET 입력 (2026-10-08, `oms-dll-abi` 크레이트로 고정 예정)
+
+**호스트 호가창 함수표** — 호스트(매칭엔진 프로세스 또는 새 APBT)가 `create` 직후 `ATTACH_HOST` op로 한 번 넘긴다(포인터는 TOML 설정에 넣을 수 없으므로 별도 op).
+```rust
+#[repr(C)] pub struct LevelC { pub price: f64, pub qty: f64, pub count: i64 }   // book::DepthInfo + 가격
+#[repr(C)] pub struct HostBookFns {
+    pub abi_version: u32,
+    pub ctx: *const c_void,
+    // side 0 = 매수, 1 = 매도.  반환 1 = 있음, 0 = 없음, 음수 = 오류(모르는 종목 id 등)
+    pub best:     unsafe extern "C" fn(ctx, key: u32, side: u8, out: *mut LevelC) -> i32,
+    pub level_at: unsafe extern "C" fn(ctx, key: u32, side: u8, price: f64, out: *mut LevelC) -> i32,
+    // best부터 바깥쪽으로, after_price 다음 레벨부터(처음은 NaN) 최대 cap개를 out에.  반환 = 채운 수(0 = 끝), 음수 = 오류
+    pub walk:     unsafe extern "C" fn(ctx, key: u32, side: u8, after_price: f64, out: *mut LevelC, cap: u32) -> i32,
+}
+```
+- DLL 안의 `BookView` 구현은 (함수표, 종목 id) 한 쌍이다. `bids_empty` = `best`가 0. `walk_bids` = `walk`를 조각(예: 16레벨)으로 불러 클로저에 하나씩 넘기고, 클로저가 멈추면 더 부르지 않는다 → 콜백이 DLL 경계를 넘지 않는다.
+- 락: 대상 종목의 호가창은 PACKET을 부르는 스레드가 유일한 writer라 락이 필요 없다(호출 중에 바뀌지 않는다). 다른 종목은 호스트가 함수 호출마다 그 종목 락을 잡는다 — 다른 종목의 `walk`는 조각 사이에 바뀔 수 있다(지금 OMS는 다른 종목을 훑지 않는다).
+- 백테(모델 A)는 한 스레드라 락 경합이 없고, 같은 함수표를 쓴다.
+
+**PACKET 입력** — 고정 머리 + 꼬리(열 배열). 패킷 구조체를 다시 만들지 않는다(아카이브 행을 그대로 열로 넘긴다, 모델 A).
+```rust
+#[repr(C)] pub struct PacketIn {
+    pub abi_version: u32,
+    pub target_key: u32,      // 함수표의 종목 id
+    pub data_type: u16,       // 0 호가, 1 체결 (QT·L3 반영 판정)
+    pub n_rows: u16,          // 그 메시지의 행 수
+    pub n_l3: u32,            // 그 메시지의 L3 이벤트 수
+    pub seq: i64,             // 의사결정 패킷 id
+    pub ts_ns: i64,           // 수신 시각 (페이퍼 시계)
+    pub has_tp: u8,           // 0 = 대상 호가창 한쪽이 비어 전략을 부르지 않는다
+    pub tp: f64, pub wap: f64, pub tp1: f64, pub tp2: f64,
+}
+// 꼬리: is_ask[u8; n_rows] · price[i64; n_rows] · qty[i64; n_rows] (정수 스케일, QT 입력)
+//       · L3C[n_l3] { info_type: u8, direction: u8, exchange_time: i64, local_time: i64, price: f64, qty: f64, event_id: i64 }
+```
+- 이 입력은 runner의 `OmsCore::on_target_packet(TargetPacket, ts, Option<TpInput>)`과 1:1이다. QT가 패킷에서 읽는 것은 종류·행별 is_ask·price·qty뿐이라 QT 입력을 이 열 슬라이스(`MessageRows`)로 바꿨다(P1).
+- 출력: 상태 코드 + 이번 호출에서 접수된 주문 수(지금 runner가 세는 것과 같은 값). 체결·취소 상세는 `QUERY`와 거래내역 테이블로 본다.
+
 ### 4.4 시간·결정성
 - 페이퍼 모드의 시계는 **패킷 수신 시각**이다(벽시계를 읽지 않는다). 같은 입력이면 같은 출력이 나와야 한다(백테 재현성).
 - 실전 모드는 커넥터가 벽시계를 쓴다. 주문 판단 시점은 `PACKET` 호출 시각이다.
@@ -285,13 +323,18 @@ on_packet(패킷, ts):
 - `OmsCore::on_target_packet`의 내용은 지금 #3·#6·#8·#9·#10 코드를 **순서 그대로** 옮긴 것이다. 새 로직은 없다.
 - DLL의 `call(PACKET, …)`은 이 함수 하나를 부른다. 그래서 runner와 DLL이 같은 코드다.
 
-**가장 큰 변경: 시장 정보(호가창·L3·피처)를 어디서 읽나 — 결정 B(§2.4)에 따라**
-- 지금 QT·TOM·전략은 피처 엔진(`Engine`)이 가진 대상 호가창(`eng.insts[target].books`)과 그 패킷의 L3(`eng.last_l3()`)를 빌려 쓴다.
-- OmsCore는 시장 정보를 **읽기 인터페이스(`MarketView`)** 로만 받는다: 대상 호가창 상위 N레벨, 그 패킷의 L3, 다른 심볼의 BBO·피처.
-  - runner의 구현: 지금처럼 `Engine`의 호가창·L3를 빌려 준다 → runner 동작 불변(V1).
-  - DLL의 구현: 매칭엔진이 게시한 sicadb 테이블을 **복사 없이** 읽는다(pin 또는 보호 구간, §2.4).
-- 그래서 OMS 코드는 한 벌이고, 데이터 출처만 둘이다. V2는 «테이블에서 읽은 대상 상위 N레벨·L3 = runner 엔진의 것»을 패킷마다 대조한다.
-- (1판의 «OmsCore가 자기 호가창을 갖는다»는 결정 B로 바뀌었다.)
+**가장 큰 변경: 시장 정보(호가창·L3·피처)를 어디서 읽나 — 결정 Y(§2.5)에 따라**
+- 리팩터 전에는 QT·TOM·전략이 피처 엔진(`Engine`)이 가진 대상 호가창(`eng.insts[target].books`, `Books` 타입)을 직접 만졌다.
+- 이제 OMS는 호가창을 **읽기 인터페이스 `BookView`**(§4.3a, `crates/oms/src/book_view.rs`)로만 읽는다: best 매수·매도, 특정 가격의 잔량, best부터 바깥으로 훑기, 한쪽이 비었나. 그 패킷의 원문·L3는 `TargetPacket`으로, 이론가는 `TpInput`으로 받는다.
+  - runner의 구현: `Books`가 `BookView`를 그대로 구현한다(같은 호출) → runner 동작 불변(V1).
+  - DLL의 구현: 매칭엔진 BookSession을 종목별 락으로 **제자리에서** 읽는 호스트 함수표(결정 Y). 다른 심볼의 피처·APL 출력은 sicadb 테이블.
+- 그래서 OMS 코드는 한 벌이고, 데이터 출처만 둘이다. V2는 «DLL이 본 호가창·L3 = runner 엔진의 것»을 패킷마다 대조한다.
+- (1판의 «OmsCore가 자기 호가창을 갖는다», 2판의 «상위 N레벨 테이블에서 읽는다»는 결정 Y로 바뀌었다. TOM은 내 주문 가격의 잔량을 깊이와 상관없이 봐야 해서 상위 N레벨로는 부족하다.)
+
+**구현 결과 (2026-10-08, hft-oms_rust 브랜치 `oms-dll/p1-bookview`)**
+- `OmsCore`는 runner 크레이트 안의 모듈(`crates/runner/src/oms_core.rs`)이다. `OrderRouter`가 실전 커넥터(`connector::gateway`)를, 전략 파라미터가 runner 설정 타입을 쓰기 때문이다. P2의 DLL 크레이트가 runner에 의존한다.
+- 순서 변화 하나: runner가 이론가(tp)를 QT·TOM **앞에서** 계산한다(원래는 뒤). tp 계산은 OMS 상태를 읽지 않고 QT·TOM은 tp를 읽지 않아 결과가 같다.
+- V1: 리팩터 전(master) analyzer와 후 analyzer로 bithumb 2026-10-04·10-02 각 180분, 8전략 — events·tp 덤프 바이트 동일, fills는 첫 열(process_id)만 다름. 독립 리뷰 «문제 없음». hft-oms_rust 로컬 커밋 966080a.
 
 **바뀌지 않는 것**
 - 처리 순서(QT → TOM → tp → 전략 → do_order), TOM 판정 시점, 전략 함수, 주문 규칙, 덤프 형식, GUI 표시값.
