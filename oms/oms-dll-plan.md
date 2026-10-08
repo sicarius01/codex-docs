@@ -254,6 +254,16 @@ destroy(instance)
 - 이 입력은 runner의 `OmsCore::on_target_packet(TargetPacket, ts, Option<TpInput>)`과 1:1이다. QT가 패킷에서 읽는 것은 종류·행별 is_ask·price·qty뿐이라 QT 입력을 이 열 슬라이스(`MessageRows`)로 바꿨다(P1).
 - 출력: 상태 코드 + 이번 호출에서 접수된 주문 수(지금 runner가 세는 것과 같은 값). 체결·취소 상세는 `QUERY`와 거래내역 테이블로 본다.
 
+**구현 결과 (P2, 2026-10-08, hft-oms_rust 로컬 커밋 3b4b81f)** — 위 초안대로 만들고 리뷰에서 다음을 보탰다.
+- 크레이트: `oms-dll-abi`(규약), `oms-dll`(DLL), `oms-dll-host`(여는 쪽 — 새 APBT 호스트도 이걸 쓴다).
+- op: `ATTACH_HOST`·`PACKET`·`CONTROL`(Pause·Resume·KillSwitch·SetLimitQty·Reset·CancelAll·CancelOrder·SetParams)·`QUERY`(EVENTS = 주문 이벤트 비우기, STATE = 재고·상태·카운터). 1판의 `MARKET` op는 뺐다(다른 종목은 Y로 함수표에서 읽는다).
+- 상태 코드: OK / BAD_INPUT / OUTPUT_SMALL / NOT_ATTACHED / POISONED / BAD_OP / REFUSED / **HOST_ERROR**(함수표가 대상 호가창을 못 줌 — 빈 호가창으로 판단하지 않고 부작용 전에 거부).
+- **스레드 규약**: 대상 호가창은 그 종목 writer 스레드만 락 없이 읽힌다. 그래서 PACKET과 취소(CancelAll·CancelOrder)는 그 스레드에서 부르거나 호스트가 함수 안에서 락을 잡는다. GUI의 취소는 writer 스레드로 넘겨 부른다. 나머지 CONTROL·QUERY는 어느 스레드든 된다.
+- `ATTACH_HOST` 입력은 함수 포인터를 담는다 — 같은 프로세스의 진짜 함수표만 넘긴다.
+- 주문 이벤트는 DLL 안 버퍼에 쌓이고 호스트가 `QUERY EVENTS`로 비운다(출력이 모자라면 들어가는 만큼, 남은 수를 알려 주고 잃지 않는다).
+- 설정 = runner 설정 TOML + `[oms_dll]`(mode는 지금 paper만, numbering_start, model_dir, 가격 격자 덮어쓰기). 모르는 키·틀린 타입은 create 실패.
+- 검증: **V2** — analyzer `--oms-dll`로 대상 패킷을 DLL로 보낸 결과가 runner와 bithumb 10-04·10-02 × 8전략 events·tp·fills 동일. **V4** — 실제 DLL로 create 실패, attach 전 호출, 버퍼 부족(PACKET·CONTROL·QUERY, 부작용 없음), 잘못된 입력, 모르는 op, 전략 종류 거부, 함수표 오류, 이벤트 부분 비우기, 5스레드 동시 호출, panic → poison, 닫기 — 경로마다 카운터 > 0. 독립 리뷰 두 번(P1·P2) 반영.
+
 ### 4.4 시간·결정성
 - 페이퍼 모드의 시계는 **패킷 수신 시각**이다(벽시계를 읽지 않는다). 같은 입력이면 같은 출력이 나와야 한다(백테 재현성).
 - 실전 모드는 커넥터가 벽시계를 쓴다. 주문 판단 시점은 `PACKET` 호출 시각이다.
